@@ -4,7 +4,5 @@ tmp
 .env
 .vscode
 .edgerc
-utils.log
 *.log
-config.py
 utils/.git*
