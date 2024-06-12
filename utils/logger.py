@@ -21,10 +21,8 @@ def get_logger(name:str=None,debug:bool=True, quiet:bool=False) -> logging.Logge
     logger = logging.getLogger(name)   
 
     if debug is True:
-        logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s <%(filename)s:%(funcName)s:%(lineno)d> [%(levelname)s] %(message)s')
     else:
-        logger.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     
     if log_to_file is True:

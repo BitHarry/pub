@@ -8,7 +8,7 @@ CONTRACTID='G-3OBG9M3'
 GROUPID='199389'
 DEBUG = True
 QUIET = True
-LOGGER = get_logger("main.log", debug=DEBUG, quiet=QUIET)
+LOGGER = get_logger("cp.log", debug=DEBUG, quiet=QUIET)
    
 
            
