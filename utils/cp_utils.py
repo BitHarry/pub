@@ -473,7 +473,7 @@ def _fetch_test_data(test_id:str=None,
         return(response.status_code, response.text)
     
     response_data = json.loads(response.text)
-    test_data = _extract_test_data(response_data)
+    test_data = _extract_test_data(response_data, logger=logger)
     test_data['test_ids'] = test_ids
     test_data['start_time'] = start_time
     test_data['end_time'] = end_time
