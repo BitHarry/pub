@@ -1,0 +1,11 @@
+docx2txt
+pygame
+openai
+chromadb
+PyPDF2
+python-vlc
+scapy
+pandas
+akamai-edgeauth
+akamai-edgegrid
+ffmpeg-python

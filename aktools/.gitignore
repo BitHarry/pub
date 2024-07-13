@@ -1,0 +1,9 @@
+__main__
+__pycache__/
+tmp
+.env
+.vscode
+.edgerc
+utils.log
+*.log
+config.py
