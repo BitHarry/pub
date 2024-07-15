@@ -9,8 +9,12 @@ import pandas as pd
 import os
 import sys
 sys.path.append(os.path.curdir)
-import config as c
-from  load_env import load_env
+from  load_env import load_env 
+try:
+    import config as c
+except ImportError:
+    import defaults as c
+
 logger = c.LOGGER
 
 
@@ -35,9 +39,9 @@ INTERVALS ={
 	  '1d':'9'
 }
 METRIC_IDS= ['1','2','30','4','5','201','15','25','26','27','43']
-DIMENSION_IDS=['4','7','2','19','1','6','22','21', '15']
+DIMENSION_IDS=['4','7','2','19','1','6','22', '15']
 SUB_SOURCE_IDS=['4']
-
+TRACEPOINTS_IDS=['10539','10545']
 TESTTYPES = ['web', 'transaction', 'api']
 
 
@@ -290,31 +294,37 @@ def instant_test(test_id:str, api_key:str=None, ):
 
 
 def hdrs_to_dict(hdrs:str)-> dict:
-    hdr_list = hdrs.replace(': ', ':').split('\r\n')
-    hdr_data = {}
-    for item in hdr_list:
-        key,value = item.split(':',1)
-        hdr_data[key.lower()] = value
-    hdr_data.pop('x-check-cacheable', None)
-    hdr_data.pop('content-type', None)
-    hdr_data.pop('server-timing', None)
-    bc = hdr_data.pop('akamai-request-bc', None)
-    bc = bc.strip("[]")
-    bc_list = bc.split(',')
-    region_location = None
-    region_asn = None
-    for pair in bc_list:
-        key, value = pair.split('=')
-        if key == 'n':
-            region_location = value
-        elif key == 'o':
-            region_asn = value
-    hdr_data['region_location'] = region_location
-    hdr_data['region_asn'] = region_asn
-    #logger.debug("Header Extracted: " + hdr_data.keys())
-    empty_keys = [k for k in hdr_data if not hdr_data[k] or hdr_data[k].strip()=='']
-    if len(empty_keys) > 0:
-        logger.debug(f"Headers with no values: {empty_keys}")
+    logger.debug('---')
+    try:
+        hdr_list = hdrs.replace(': ', ':').split('\r\n')
+        hdr_data = {}
+        for item in hdr_list:
+            key,value = item.split(':',1)
+            hdr_data[key.lower()] = value
+        hdr_data.pop('x-check-cacheable', None)
+        hdr_data.pop('content-type', None)
+        hdr_data.pop('server-timing', None)
+        bc = hdr_data.pop('akamai-request-bc', None)
+        bc = bc.strip("[]")
+        bc_list = bc.split(',')
+        region_location = None
+        region_asn = None
+        for pair in bc_list:
+            key, value = pair.split('=')
+            if key == 'n':
+                region_location = value
+            elif key == 'o':
+                region_asn = value
+        hdr_data['region_location'] = region_location
+        hdr_data['region_asn'] = region_asn
+        #logger.debug("Header Extracted: " + hdr_data.keys())
+        empty_keys = [k for k in hdr_data if not hdr_data[k] or hdr_data[k].strip()=='']
+        if len(empty_keys) > 0:
+            logger.debug(f"Headers with no values: {empty_keys}")
+    except Exception as e:
+        logger.debug(f"Error splitting headers: {e}")
+        logger.debug(f"Headers: {hdrs}")
+        return None
     return hdr_data
 
     
@@ -339,13 +349,15 @@ def _extract_test_data(response_data:dict,
     mismatches= 0
     outliers_count= 0
     errors_count = 0
+    null_values_count = 0
     potential_outliers_count = 0
     exc_outliers_str = "(Excluded)" if inc_outliers is False else "(Included)"
     exc_errors_str = "(Excluded)" if inc_errors is False else "(Included)"
     real_item_count = 0
     extracted_item_count = 0
     skipped = 0
-    hds_index = None
+    hdrs_index  =[]
+    
 
     
     
@@ -364,51 +376,63 @@ def _extract_test_data(response_data:dict,
     
     ## tracepoints : here just looking for specific tracepoints
     # to do, also extract any tracepoint available 
-    if not 'tracepoints' in response_items.keys():
+    if 'tracepoints' not in response_items.keys():
         logger.warn('no tracepoints in response_data')
         logger.debug(response_items.keys())
         #need to handle this
     else:
+        logger.debug( response_items['tracepoints'])
         for tracepoint in response_items['tracepoints']:
             tracepoints[tracepoint['name'].lower()] = tracepoint['index']
-        logger.debug("tracepoints" +json.dumps(tracepoints))
-        try:
-            hds_index = int(tracepoints['ak_hdrs'] )   
-            assert hds_index is not None
-        except KeyError as e:
-            logger.debug(f"ak_hdr key error: {e}")
-            logger.debug("trying es_hdrs")
-            try:
-                hds_index = int(tracepoints['es_hdrs'] )   
-                assert hds_index is not None
-            except KeyError as e:
-                logger.warn(f"ak_hdrs and es_hdrs not found, contimuing without")
-                hdr_index = None
-            except Exception as e:
-                logger.error(f"unknown Error: {e}")
-                hdr_index = None
-        except Exception as e:
-            logger.error(f"unknown Error: {e}")
-            hdr_index = None
-    
-
-    if hds_index is not None:
-        headers_names = hdrs_to_dict    
         
+        logger.debug("tracepoints" +json.dumps(tracepoints))    
+        if 'ak_hdrs' in tracepoints.keys():
+            hdrs_index.append(int(tracepoints['ak_hdrs'] ))   
+        if 'es_hdrs' in tracepoints.keys():
+            hdrs_index.append(int(tracepoints['es_hdrs'] ))
+        
+    
+    
+    if len(hdrs_index) > 0:
+        sample_hdrs= None
+        for i in range(0, int(len(response_items['items'])/4)):
+            if sample_hdrs is not None:
+                break
+            for index in hdrs_index:
+                sample_hdrs = hdrs_to_dict(response_items['items'][i]['tracepoints'][index])
+                if sample_hdrs is not None:
+                    headers_names = list(sample_hdrs.keys())
+                    logger.debug(f"Sample Headers: {headers_names}")
+                    break
 
+                                    
 
 
 
     logger.debug(f"Dimension names:{dimension_names}")
     logger.debug(f"Metric names:{metric_names}")
+    logger.debug(f"Headers names:{headers_names}")
+    columns = ['row_id'] + dimension_names + metric_names + headers_names
 
-    logger.debug(f"Dimension names:{dimension_names}")
-    logger.debug(f"Metric names:{metric_names}")
-
-    columns = ['row_id'] + dimension_names + metric_names
 
     #####  data rows #############################
     for item in response_items['items']:
+
+        header_values = []
+        if headers_names != []:
+            for index in hdrs_index:
+                headers_dict =  hdrs_to_dict(item['tracepoints'][index])
+                if headers_dict not in [None, {}]:
+                    for header_names in headers_names:
+                        header_values.append(headers_dict[header_names])
+                    break
+
+            if header_values == []:
+                logger.debug(f"Unknown header in row {row_index}: {item['tracepoints']}")
+                for i in range(0, len(headers_names)):
+                    header_values.append(None)
+           
+
         dimension_values = []
         dimension_values.append(row_index)
         ###### single row dimension values
@@ -417,7 +441,26 @@ def _extract_test_data(response_data:dict,
        # for tracepoint_value in item['tracepoints']:
         #    dimension_values.append(tracepoint_value['name'])
         ########single row metric values
-        metric_values = [None if value is None else float(value) for value in item['values']]
+        metric_values = item['values']
+        has_null_value = False
+        for n in metric_values:
+            if n is None:
+                # 'cnt_connection_failures', 'cnt_ssl_failures', 'cnt_response_failures', 'cnt_timeout_failures'
+                if metric_names[metric_values.index(n)] in ['cnt_connection_failures', 'cnt_ssl_failures', 'cnt_response_failures', 'cnt_timeout_failures']:
+                    metric_values[metric_values.index(n)] = 0.0
+                else:
+                    logger.debug(f"Null value in metric {metric_names[metric_values.index(n)]}")
+                    has_null_value = True
+                    break
+      
+        if has_null_value:
+            skipped+=1
+            null_values_count+=1
+            logger.debug(f"excluding row {row_index} with null values in metrics {metric_names}:{metric_values}")  
+            excluded.append(dimension_values+metric_values)
+            row_index+=1
+            continue    
+        
         ### srcub bad data points
         has_outlier = False
         has_error = False
@@ -439,25 +482,34 @@ def _extract_test_data(response_data:dict,
                     has_error = True
 
         if has_outlier is False and  has_error is False:
-            rows.append(dimension_values+metric_values)
-        elif has_outlier is True and inc_outliers is True:
+            rows.append(dimension_values+metric_values + header_values)
+            row_index+=1
+            continue
+
+        if has_outlier is True and inc_outliers is True:
             outliers_count=+1
-            rows.append(dimension_values+metric_values)
-        elif has_error is True and inc_errors is True:
+            rows.append(dimension_values+metric_values + header_values)
+            row_index+=1
+            continue
+
+        if has_error is True and inc_errors is True:
             errors_count+=1
-            rows.append(dimension_values+metric_values)
-        else:
-            excluded.append(dimension_values+metric_values)
-            skipped+=1
-            if has_outlier:
-                outliers_count+=1
-            if has_error:
-                errors_count+=1
-            
+            rows.append(dimension_values+metric_values + header_values)
+            row_index+=1
+            continue
+
+        
+        excluded.append(dimension_values+metric_values + header_values)
+        skipped+=1
+        if has_outlier:
+            outliers_count+=1
+        if has_error:
+            errors_count+=1
+        row_index+=1
             #logger.debug(f":Excluded {excluded[-1]}...")
             #logger.debug(f"Reason: has_error={has_error}. has_outlier={has_outlier}")
 
-        row_index+=1
+        
         #################### end all rows  ############################
     real_item_count = len(response_items['items'])
     extracted_item_count = len(rows) + skipped
@@ -468,6 +520,7 @@ def _extract_test_data(response_data:dict,
     logger.debug(f"Total data points excluded: {skipped}")
     logger.debug(f"Potential outliers(included): {potential_outliers_count}")
     logger.debug(f"Data field mismatch count {mismatches}")
+    logger.debug(f"Null metric valuies count {null_values_count}")
     return {
         'rows':rows,
         'columns':columns,
@@ -490,6 +543,7 @@ def _fetch_test_data(test_id=None,
                     metric_ids:list=METRIC_IDS,
                     dimension_ids:list=DIMENSION_IDS,
                     sub_source_ids:list=SUB_SOURCE_IDS,
+                    tracepoints_ids:list=TRACEPOINTS_IDS,
                     api_key:str=None,
                     ) -> TestData:
     logger.debug('---')
@@ -549,28 +603,38 @@ def _fetch_test_data(test_id=None,
         'interval':interval,
         'metricIds': ",".join(metric_ids),
         'dimensionIds':",".join(dimension_ids),
-        'subSourceIds':",".join(sub_source_ids)
+        'subSourceIds':",".join(sub_source_ids),
+        'tracepointIds':",".join(tracepoints_ids),
     }
-    for key, value in params.items():
-        logger.debug(f"Param: {key}={value}")
-
+    test_data_end_point = f"https://io.catchpoint.com/api/v2/tests/explorer/{data_type}"
+    logger.debug(f"End Point URL: {test_data_end_point}")
+    logger.debug(f"Params: {json.dumps(params, indent=2)}")
     headers = {
         'accept': 'application/json',
         'Authorization': f'Bearer {api_key}'
     }
-    logger.debug(json.dumps(headers, indent=2  ))
+    logger.debug(f"Headers:{json.dumps(headers, indent=2 )}")
     time.sleep(1)
-    test_data_end_point = f"https://io.catchpoint.com/api/v2/tests/explorer/{data_type}"
+    logger.debug("Fetching test data...")
     response = requests.get(test_data_end_point, headers=headers, params=params)
+    logger.debug(f"Response satus code: {response.status_code}")
     if response.status_code != 200:
         if response.status_code == 429:
+            error_count = 0
+            error_max = 5
             while(response.status_code == 429):
-                logger.debug(f"Rate limit exceeded, retrying in 2 seconds...")
+                error_count+=1
+                logger.debug("Rate limit exceeded, retrying in 2 seconds...")
                 logger.debug("X-Rate-Limit:" + response.headers['X-Rate-Limit-Limit'])
                 logger.debug("X-Rate-Limit-Remaining:"+response.headers['X-Rate-Limit-Remaining'])
                 logger.debug("X-Rate-Limit-Reset:"+response.headers['X-Rate-Limit-Reset'])
                 logger.debug("X-Rate-Limit-Reset:"+response.headers['Date'])
                 time.sleep(2)
+                if(error_count > error_max):
+                    logger.error(f"Rate limit exceeded {error_count} times, exiting")
+                    logger.debug(f"Error Response: {response.text}")
+                    logger.debug(f"Error Response Headers: {response.headers}")
+                    return (response.status_code, response.text)
                 response = requests.get(test_data_end_point, headers=headers, params=params)
         else:
             logger.error(f"Req {response.url} error {response.status_code}")
