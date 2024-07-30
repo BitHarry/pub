@@ -1,14 +1,10 @@
-from logger import get_logger
+#/usr/bin/env python3
 import os
-BASE_PATH = os.path.dirname(os.path.abspath(__file__))
-ENV_FILE = os.path.join(BASE_PATH, ".env")
-EDGERC_FILE = os.path.join(BASE_PATH, ".edgerc")
+ENV_FILE = "/home/akleytma/.env"
+EDGERC_FILE = "/home/akleytma/.edgerc"
+LOG_FILE = "/home/akleytma/wip/aktools/logs/main.log"
 SECTION='default' 
 CONTRACTID='G-3OBG9M3'
 GROUPID='199389'
 DEBUG = True
-QUIET = True
-LOGGER = get_logger("main.log", debug=DEBUG, quiet=QUIET)
-   
-
-           
+QUIET = False

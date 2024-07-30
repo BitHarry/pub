@@ -4,7 +4,7 @@ import pandas.io.sql as panda_sql
 from pandas import DataFrame
 import sys
 import warnings
-from config import LOGGER as logger
+from akvars import LOGGER as logger
 
 TIMEOUT=20
 

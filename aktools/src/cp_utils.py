@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-
+import akvars
+from akvars import LOGGER as logger
 import time
 from datetime import datetime, timedelta
 import requests
@@ -8,14 +9,9 @@ import sqlite3
 import pandas as pd
 import os
 import sys
-sys.path.append(os.path.curdir)
+import numpy as np
+from utils import is_number
 from  load_env import load_env 
-try:
-    import config as c
-except ImportError:
-    import defaults as c
-
-logger = c.LOGGER
 
 
 USAGE="""
@@ -38,10 +34,15 @@ INTERVALS ={
 	  '6h':'16',
 	  '1d':'9'
 }
-METRIC_IDS= ['1','2','30','4','5','201','15','25','26','27','43']
-DIMENSION_IDS=['4','7','2','19','1','6','22', '15']
+
+
+DIMENSION_IDS=['4','7','2','19','1','22','94']
+
+METRIC_IDS= ['1','2','30','4','5','201','25','26','27','43','6','221','39']
+
 SUB_SOURCE_IDS=['4']
-TRACEPOINTS_IDS=['10539','10545']
+#10545 x-es-info
+TRACEPOINTS_IDS=['10565','10538','10545']
 TESTTYPES = ['web', 'transaction', 'api']
 
 
@@ -241,6 +242,9 @@ def _fetch_tests_details(folder_id:str, test_type='all', api_key:str=None ):
 def tests(folder_id:int, test_type='all', api_key:str=None, ):
     return _fetch_tests_details(folder_id=folder_id, test_type=test_type, api_key=api_key, )
 
+def test_info(folder_id:int, test_type='all', api_key:str=None, ):
+    return _fetch_tests_details(folder_id=folder_id, test_type=test_type, api_key=api_key, )
+
 
 def _fetch_folder_details(folder_id, api_key:str=None, ):
     logger.debug('---')
@@ -289,10 +293,18 @@ def folders(folder_id, api_key:str=None):
     return _fetch_folder_details(folder_id=folder_id, api_key=api_key )
 
 
+def folder_info(folder_id, api_key:str=None):
+    """ 
+    _folders(folder_id, api_key:str=None, ) returns (http_status_code, dict with folder details and metadata.)
+    """
+    return _fetch_folder_details(folder_id=folder_id, api_key=api_key )
+
+
+
 def instant_test(test_id:str, api_key:str=None, ):
    pass 
 
-
+"""
 def hdrs_to_dict(hdrs:str)-> dict:
     logger.debug('---')
     try:
@@ -326,7 +338,7 @@ def hdrs_to_dict(hdrs:str)-> dict:
         logger.debug(f"Headers: {hdrs}")
         return None
     return hdr_data
-
+"""
     
 
 ######################################################################
@@ -342,7 +354,7 @@ def _extract_test_data(response_data:dict,
     columns = []
     dimension_names = []
     metric_names = []
-    headers_names = []
+    header_names = []
     tracepoints = {}
     rows = []
     excluded =[]
@@ -356,8 +368,7 @@ def _extract_test_data(response_data:dict,
     real_item_count = 0
     extracted_item_count = 0
     skipped = 0
-    hdrs_index  =[]
-    
+ 
 
     
     
@@ -383,83 +394,48 @@ def _extract_test_data(response_data:dict,
     else:
         logger.debug( response_items['tracepoints'])
         for tracepoint in response_items['tracepoints']:
-            tracepoints[tracepoint['name'].lower()] = tracepoint['index']
+            tracepoints[tracepoint['index']] = tracepoint['name']
+            header_names.append(tracepoint['name'].replace('-','_').lower())
         
-        logger.debug("tracepoints" +json.dumps(tracepoints))    
-        if 'ak_hdrs' in tracepoints.keys():
-            hdrs_index.append(int(tracepoints['ak_hdrs'] ))   
-        if 'es_hdrs' in tracepoints.keys():
-            hdrs_index.append(int(tracepoints['es_hdrs'] ))
-        
-    
-    
-    if len(hdrs_index) > 0:
-        sample_hdrs= None
-        for i in range(0, int(len(response_items['items'])/4)):
-            if sample_hdrs is not None:
-                break
-            for index in hdrs_index:
-                sample_hdrs = hdrs_to_dict(response_items['items'][i]['tracepoints'][index])
-                if sample_hdrs is not None:
-                    headers_names = list(sample_hdrs.keys())
-                    logger.debug(f"Sample Headers: {headers_names}")
-                    break
-
-                                    
-
+                        
 
 
     logger.debug(f"Dimension names:{dimension_names}")
     logger.debug(f"Metric names:{metric_names}")
-    logger.debug(f"Headers names:{headers_names}")
-    columns = ['row_id'] + dimension_names + metric_names + headers_names
+    logger.debug(f"Headers names:{header_names}")
+    columns =  dimension_names + metric_names + header_names
 
 
     #####  data rows #############################
     for item in response_items['items']:
 
         header_values = []
-        if headers_names != []:
-            for index in hdrs_index:
-                headers_dict =  hdrs_to_dict(item['tracepoints'][index])
-                if headers_dict not in [None, {}]:
-                    for header_names in headers_names:
-                        header_values.append(headers_dict[header_names])
-                    break
-
-            if header_values == []:
-                logger.debug(f"Unknown header in row {row_index}: {item['tracepoints']}")
-                for i in range(0, len(headers_names)):
-                    header_values.append(None)
-           
+        for  header_value in item['tracepoints']:
+            header_values.append(header_value)
+               
 
         dimension_values = []
-        dimension_values.append(row_index)
         ###### single row dimension values
         for dimension_value in item['dimensions']:
-            dimension_values.append(dimension_value['name'])
+            dimension_values.append(str(dimension_value['name']))
        # for tracepoint_value in item['tracepoints']:
         #    dimension_values.append(tracepoint_value['name'])
         ########single row metric values
         metric_values = item['values']
         has_null_value = False
         for n in metric_values:
-            if n is None:
+            if not is_number(n):
                 # 'cnt_connection_failures', 'cnt_ssl_failures', 'cnt_response_failures', 'cnt_timeout_failures'
                 if metric_names[metric_values.index(n)] in ['cnt_connection_failures', 'cnt_ssl_failures', 'cnt_response_failures', 'cnt_timeout_failures']:
                     metric_values[metric_values.index(n)] = 0.0
                 else:
-                    logger.debug(f"Null value in metric {metric_names[metric_values.index(n)]}")
-                    has_null_value = True
-                    break
+                    metric_values[metric_values.index(n)] = np.nan
+                    has_null_value = True   
       
         if has_null_value:
-            skipped+=1
             null_values_count+=1
-            logger.debug(f"excluding row {row_index} with null values in metrics {metric_names}:{metric_values}")  
-            excluded.append(dimension_values+metric_values)
-            row_index+=1
-            continue    
+            logger.debug(f"row {row_index} has null values in metrics {metric_names}:{metric_values}")  
+           
         
         ### srcub bad data points
         has_outlier = False
@@ -677,6 +653,7 @@ def get_data(test_id:str=None,
             metric_ids:list=METRIC_IDS,
             dimension_ids:list=DIMENSION_IDS,
             sub_source_ids:list=SUB_SOURCE_IDS,
+            tracepoints_ids:list=TRACEPOINTS_IDS,
             api_key:str=None,
             
              ) -> TestData:
@@ -711,6 +688,7 @@ def get_data(test_id:str=None,
             metric_ids=metric_ids,
             dimension_ids=dimension_ids,
             sub_source_ids=sub_source_ids,
+            tracepoints_ids=tracepoints_ids,
             api_key=api_key,
             
     

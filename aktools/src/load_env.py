@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
-from config import ENV_FILE
+from akvars import ENV_FILE, LOGGER
 
 def load_env(env_file:str=ENV_FILE):
     """
@@ -26,7 +26,6 @@ def load_env(env_file:str=ENV_FILE):
     return loaded_vars
 
 def _test():
-    from config import LOGGER
     LOGGER.debug(ENV_FILE)
     LOGGER.info(load_env())
 
