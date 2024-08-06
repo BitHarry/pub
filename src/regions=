@@ -1,0 +1,2 @@
+regions= $(agg brave "SELECT distinct region from mcm_machines WHERE network = 'brave' and regionname like '%FABRIC%'" | xargs);
+echo $regions;
