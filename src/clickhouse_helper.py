@@ -3,8 +3,15 @@ import pandas as pd
 import os
 import sys
 from clickhouse_driver import Client
-from config import LOGGER as logger,CL_TABLE_DEFINITION, CL_DATATYPES_DICT, CL_TO_DFTYPES_DICT, CL_DB_NAME, CL_DB_PORT, CL_DB_HOST, CL_DB_USER, X_AKA_INFO, X_ES_INFO, AKAMAI_REQUEST_BC
-from misc import load_env
+from config import LOGGER as logger, CL_DB_NAME, CL_DB_PORT, CL_DB_HOST, CL_DB_USER
+from utils import load_env
+import decimal
+import ipaddress
+import uuid
+import json
+from tqdm import tqdm
+
+
 
 def get_client( host=CL_DB_HOST, port=CL_DB_PORT, user=CL_DB_USER, password=None, database=CL_DB_NAME)->Client:
  
@@ -18,123 +25,81 @@ def get_client( host=CL_DB_HOST, port=CL_DB_PORT, user=CL_DB_USER, password=None
 
 
 
-def get_dataframe(query:str, table:str, host=CL_DB_HOST, port=CL_DB_PORT, user=CL_DB_USER, password=None, database=CL_DB_NAME):
-
-    client = get_client(host=host, port=port, user=user, password=password, database=database)
-    data = client.execute(query)
-    column_names = [desc[0] for desc in client.execute(f"DESCRIBE TABLE {table}")]
-
-
-
-        
-def cast_to_tbl_dtype(row:dict, conversion_dict:dict=CL_DATATYPES_DICT):
+def cast_to_tbl_dtype(row, conversion_dict):
     
-    if 'req_id'  in row.keys():
+    def convert_value(value, dtype):
+   
+        if 'Nullable' in dtype:
+            for n in ['nan', '<NA>', 'NaN']:
+                if n in str(value):
+                    return None 
+            dtype = dtype.replace('Nullable(', '').replace(')', '')       
+        
         try:
-            row['req_id'] = int(row['req_id'])
+            if dtype.startswith('Int') or dtype.startswith('UInt'):
+                return int(value) if value is not None else None
+            
+            if dtype.startswith('Float'):
+                return float(value) if value is not None else None
+            
+            if dtype == 'String' or dtype.startswith('FixedString'):
+                return str(value) if value is not None else None
+            
+            if dtype == 'Date':
+                return pd.to_datetime(value).date() if value is not None else None
+            
+            if dtype.startswith('DateTime'):
+                return pd.to_datetime(value) if value is not None else None
+            
+            if dtype.startswith('Decimal'):
+                return decimal.Decimal(value) if value is not None else None
+            
+            if dtype == 'UUID':
+                return uuid.UUID(value) if value is not None else None
+            
+            if dtype == 'IPv4':
+                return ipaddress.IPv4Address(value) if value is not None else None
+            
+            if dtype == 'IPv6':
+                return ipaddress.IPv6Address(value) if value is not None else None
+            
+            if dtype.startswith('Array'):
+                return value if value is not None else []
+            
+            if dtype.startswith('Tuple'):
+                return tuple(value) if value is not None else None
+            
+            if dtype.startswith('Map'):
+                return dict(value) if value is not None else {}
+            
+            if dtype == 'JSON':
+                return json.loads(value) if value is not None else None
         except Exception as e:
-            row['req_id'] = 0    
-
-    logger.debug(f"conversion dict: {conversion_dict}")
-
-    for df_column_name in row.keys():
-        if df_column_name not in  conversion_dict.keys():
-            logger.error(f"column {df_column_name} not in {row.keys()}")
-            raise ValueError(f"tbl columns {df_column_name} does not match dataframe columns  {row.keys()}")
-
-        if pd.isna(row[df_column_name]) or row[df_column_name] in ['nan', '<NA>']:
-            row[df_column_name] = None
-            continue
-        #i am insecure
-        if row[df_column_name] is None:
-            continue
-
-
-        if conversion_dict[df_column_name] == 'Int32':
-            try:
-                row[df_column_name]= int(row[df_column_name])
-            except Exception as e:
-                logger.error(f"failed to convert {df_column_name} : {row[df_column_name]} to Int: {e}") 
-                row[df_column_name]= None
-        elif conversion_dict[df_column_name] == 'Float32':
-            try:
-                row[df_column_name]= float(row[df_column_name])
-            except Exception as e:
-                logger.error(f"failed to convert {df_column_name} : {row[df_column_name]} to Float: {e}")
-                row[df_column_name]= None
-        elif conversion_dict[df_column_name] == 'String':
-            try:
-                row[df_column_name]= str(row[df_column_name])
-            except Exception as e:
-                logger.error(f"failed to convert {df_column_name} : {row[df_column_name]} to String: {e}")
-                row[df_column_name]= None
-        elif conversion_dict[df_column_name] == 'DateTime':
-            try:
-                row[df_column_name]= pd.to_datetime(row[df_column_name])
-            except  Exception as e:
-                logger.error(f"failed to convert {df_column_name} : {row[df_column_name]} to datetime: {e}")
-                row[df_column_name]= None
-        elif conversion_dict[df_column_name] in ('IPv4', 'IPv6'):
-            try:
-                row[df_column_name]= str(row[df_column_name])
-            except Exception as e:
-                logger.error(f"failed to convert {df_column_name} : {row[df_column_name]} to IPv4: {e}")
-                row[df_column_name]= None
-                
-        else:
-            logger.debug(f"unknown datatype {conversion_dict[df_column_name]}")
-            logger.debug(f"conversion dict: {conversion_dict}")
-            try:
-                row[df_column_name]= str(row[df_column_name])
-            except Exception as e:
-                logger.error(f"failed to convert {df_column_name} : {row[df_column_name]} to unknown data tye: {e}")
-                raise ValueError(f"unknown datatype {conversion_dict[df_column_name]} {e}")
-
-    return row
-
-
-'''
-def create_table(tbl_def_dict:dict={}, client:Client=get_client()):
-    logger.debug('')
-     
-    tble_columns = "" 
-    for col in tbl_def_dict.keys():
-        tble_columns += f"{col} {" ,".join(tbl_def_dict[col]}, "
-
-
-
-    create_table_query = f"""
-    CREATE TABLE IF NOT EXISTS {table_name} ({tbl_columns})
-    ENGINE = MergeTree()
-    PARTITION BY toYYYYMM(time)
-    ORDER BY (time, request, node)
-    """
-    x = client.execute(create_table_query) 
-    logger.debug(f"execute create table query says :{x}")
-
-'''
+            logger.debug(f"Exception:Failed to convert value {value} to type {dtype}: {e}")
+            return None
+        
+        return value  # Fallback for any other types
+    
+    converted_row = {key: convert_value(value, conversion_dict[key]) for key, value in row.items()}
+    return converted_row
 
 
 
 def upload_df(dataframe: pd.DataFrame, table_name="test", client=get_client()):
-    logger.debug('')
-    completed = False
-    
-    
+    logger.debug(f"Uploading dataframe to {table_name}")    
     tbl_schema = get_tbl_schema(table_name, client)
     tbl_columns = ", ".join(tbl_schema.keys())
     if tbl_schema is None:
         logger.error(f"table {table_name} does not exist")
-        return False
+        return None
     total_rows = dataframe.shape[0]
     logger.debug(f"Total number of rows in dataframe: {total_rows}")
-    inserted_rows = 0
-    total_fails = 0
+    failed_rows = []
+    inserted_row_count = 0
     fails = 0
     index = 0
         
-    for df_row in dataframe.to_dict(orient='records'):
-        index += 1
+    for df_row in tqdm(dataframe.to_dict(orient='records'), desc="Loading data", total=total_rows):
         #need to scrub data and set correct datatypes cus panadas does its own thing
        
         tbl_row = cast_to_tbl_dtype(df_row, conversion_dict=tbl_schema)   
@@ -143,32 +108,33 @@ def upload_df(dataframe: pd.DataFrame, table_name="test", client=get_client()):
         insert_query = f"INSERT INTO {table_name} ( {tbl_columns} ) VALUES "
         try:
             client.execute(insert_query, [row_values], types_check=True)
-            inserted_rows += 1
+            inserted_row_count += 1
             fails = 0
         except Exception as e:
-            logger.error(f"failed to insert row  {index+1} into {table_name}")
-            logger.error(f"Error: {e}")
-            logger.debug(f"failed row: {tbl_row.values()}")
-            logger.debug(f"insert query: {insert_query}")
-
+            logger.error(f"Insert Error at index {index}: {e}")
+            logger.debug(f"columns: {tbl_columns}")
+            logger.debug(f"failed original values: {dataframe.iloc[index]}")
+            logger.debug(f"failed prepped values: {row_values}")
+            failed_rows.append(index)
+            #logger.debug(f"insert query: {insert_query}")
             fails += 1
-            total_fails += 1
             if fails > 10:
                 logger.error("too many failed inserts in a row, exiting")
-                completed = False
                 break
-        
-    if inserted_rows != total_rows:
-        if inserted_rows > 0:
-            logger.warning(f" Not all rows were inserted into {table_name}. Total rows: {total_rows}, Inserted rows: {inserted_rows}")
-            completed = True
-        else:
-            logger.error(f" No rows were inserted into {table_name}")
-            completed = False
+        finally:
+            index += 1  
 
-    logger.debug(f"Total inserted  rows {inserted_rows}  for {table_name}")
-    logger.debug(f"Total insert failures {total_fails} for {table_name}")
-    return completed
+        
+    if  failed_rows != []:
+        if inserted_row_count > 0:
+            logger.warning(f" Not all rows were inserted into {table_name}")
+            logger.debug(f"Failed to insert rows at indexes: {failed_rows}")
+        else:
+            logger.error(f" Failed to insert anything into {table_name}")    
+    else:
+        logger.debug(f"All {total_rows} rows were inserted into {table_name}")
+
+    return (failed_rows)
 
 
 
@@ -186,7 +152,79 @@ def get_tbl_schema(table_name:str, client:Client=get_client()) -> dict:
     except Exception as e:
         return None
 
-    
+
+def update_arcd_machines(client:Client=get_client()):
+    logger.debug("Updating arcd_machines table")
+
+    arcd_machines_sql = """SELECT 
+                            m.ip as ip, 
+                            m.region as region, 
+                            m.regionName as region_name, 
+                            CASE 
+                                WHEN SUBSTR(anycastname, STRLEN(a.anycastname)-1, 2) = '-b' THEN REPLACE(SUBSTR(a.anycastname, 1, STRLEN(anycastname)-2), 'eip-', '')
+                                WHEN SUBSTR(anycastname,STRLEN(a.anycastname)-1, 2) = '-a' THEN REPLACE(SUBSTR(a.anycastname, 1, STRLEN(a.anycastname)-2), 'eip-', '')
+                                ELSE a.anycastname
+                            END AS cloud,             
+                            l.city as city, 
+                            l.state as state, 
+                            l.metro as metro, 
+                            l.country as country, 
+                            l.continent as continent,  
+                            CAST(l.latitude AS FLOAT) / 1000.00 as lat, 
+                            CAST(l.longitude AS FLOAT) / 1000.00 as long 
+                        FROM 
+                            mcm_machines m, 
+                            mcm_regionlocation l,
+                            routing_region_v2_postinstall a 
+
+                        WHERE 
+                            m.region = l.physicalRegion 
+                            AND m.network = 'brave'
+                            AND m.region = a.region 
+                            AND a.anycastname NOT LIKE  '%eip-global%'
+                            AND a.anycastname NOT LIKE  '%overlay%'
+                        GROUP BY 
+                            1 
+                        ORDER BY 
+                            2,9,4,7
+            """
+
+    import query2_helper as q2
+    logger.debug("fething data from brave agg...")
+    agg = q2.get_agg('brave')
+    try:
+        df = q2.query(arcd_machines_sql, agg, pyquery=True)
+        assert df is not None or not df.empty
+    except Exception as e:
+        logger.error(f"Failed to get arcd_machines data: {e}")
+        return False
+    logger.debug("success")
+           
+    logger.debug('uploading arcd_machines to clickhouse')
+    failed_rows = upload_df(df, table_name="arcd_machines", client=client)
+    if failed_rows != []:
+        logger.debug(f"{len(failed_rows)} failed rows")
+
+    sql = f"SELECT count(*) FROM arcd_machines;"
+    res = client.execute(sql)
+    logger.debug(f"arcd_machines count: {res}")
+    return True
+
+
+
+def get_arcd_machines(client=get_client())->dict:
+    sql = f"SELECT ip, region, region_name, cloud FROM arcd_machines"
+    res = client.execute(sql)
+    arcd_machines = {}
+    for ip, region, region_name, cloud in res:
+        arcd_machines[ip] = {
+            "region": region,
+            "region_name": region_name,
+            "cloud": cloud
+        }
+    return arcd_machines
+
+
 
 def test():
     import json
@@ -201,11 +239,12 @@ def test():
         bool Nullable(Int8),
         ipv4 Nullable(IPv4),
         ipv6 Nullable(IPv6),
-        array Array(String),
-        tuple Tuple(String, Int32),
+        array Array(Nullable(String)),
+        tuple Tuple(Nullable(String), Nullable(Int32)),
         map Map(String, String)
     """
     test_data  = {
+        
         'time': [
                 datetime.datetime(2023, 7, 21, 12, 0, 0), 
                 datetime.datetime(2023, 7, 22, 13, 0, 0), 
@@ -246,6 +285,7 @@ def test():
     completed = upload_df(test_df, table_name, client)
     print(f"Data upload completed: {completed}")
     res.append(client.execute(f"select * from {table_name}"))
+    print(res)
 
 
 if __name__ == "__main__":

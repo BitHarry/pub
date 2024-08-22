@@ -1,24 +1,13 @@
 #!/usr/bin/env python3
 import logging
 import sys
-import os
-
 
 def get_logger(file:str=None,debug:bool=True, quiet:bool=False) -> logging.Logger:
-
-    
-    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    PARENT_DIR = os.path.dirname(CURRENT_DIR)
-    sys.path.append(CURRENT_DIR)
-    sys.path.append(PARENT_DIR)
-
-    if  file is not None:
-        if not file.endswith(".log"):
-            file = f"{file}.log"
-        log_to_file = True
+    if file is None:
+        file = __file__
+        log_to_file = False
     else:
-        file = "pietools"
-        log_to_file = False  
+        log_to_file = True 
 
     logger = logging.getLogger(file)   
 
@@ -48,7 +37,11 @@ def get_logger(file:str=None,debug:bool=True, quiet:bool=False) -> logging.Logge
     
     return logger
 
-def _test():
+
+
+
+def test():
+
     
     print("TEST 1")
     print("""get_logger("test1.log", debug=True, quiet=False)""")
@@ -88,4 +81,4 @@ def _test():
     LOGGER.info("end of test")
 
 if __name__ == "__main__":
-    _test()
+    test()

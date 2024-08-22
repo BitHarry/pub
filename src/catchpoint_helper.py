@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from config import LOGGER as logger, X_AKA_INFO, X_ES_INFO, AKAMAI_REQUEST_BC
+from config  import X_AKA_INFO, X_ES_INFO, AKAMAI_REQUEST_BC, LOGGER as logger
 import time
 from datetime import datetime, timedelta
 import requests
@@ -8,7 +8,7 @@ import sqlite3
 import pandas as pd
 import os
 import sys
-from misc import  load_env
+from utils import load_env
 
 
 USAGE="""
@@ -41,6 +41,11 @@ SUB_SOURCE_IDS=['4']
 #10545 x-es-info
 TRACEPOINTS_IDS=['10565','10538','10545']
 TESTTYPES = ['web', 'transaction', 'api']
+
+DBG_HDR_DICT = {'x_aka_info': X_AKA_INFO, 
+                        'x_es_info' : X_ES_INFO, 
+                        'akamai_request_bc': AKAMAI_REQUEST_BC
+    }
 
 
 class TestData:
@@ -100,8 +105,16 @@ class TestData:
 
     def __init__(self, test_data:dict):
         """ __init__(self, test_data:dict):  init from a dictionary of catchpoint test data."""
-        self.columns = test_data['columns']
-        self.rows = test_data['rows']
+       
+        self.df = pd.DataFrame(test_data['rows'], columns=test_data['columns'])
+        hdrs = list(DBG_HDR_DICT.keys())
+        for hdr in hdrs:
+            if hdr in test_data['tracepoint_names']:
+                self.df = extract_and_combine(self.df)
+                break
+       
+        self.columns = list(self.df.columns)
+        self.rows = self.df.values.tolist()
         self.dimensions = test_data['dimension_names']
         self.metrics = test_data['metric_names']
         self.tracepoints = test_data['tracepoint_names']
@@ -113,8 +126,10 @@ class TestData:
         self.metric_ids = test_data['metric_ids']
         self.dimension_ids = test_data['dimension_ids']
         self.sub_source_ids = test_data['sub_source_ids']
+        self.tracepoints_ids = test_data['tracepoints_ids']
         self.response_data = test_data['response_data']
-      
+
+  
 
 
     def query(self, sql:str, conn:sqlite3.Connection=None) -> pd.DataFrame:
@@ -127,7 +142,11 @@ class TestData:
 
     def data_frame(self) -> pd.DataFrame:
         """data_frame(self) -> pd.DataFrame: Converts the test data to a pandas DataFrame and returns it."""
-        return pd.DataFrame(self.rows, columns=self.columns)
+        return self.df
+    def to_dataframe(self) -> pd.DataFrame:
+        return self.df
+    def dataframe(self) -> pd.DataFrame:
+        return self.df
     
     def to_html(self) -> str:
         """to_html(self): Converts the test data to an HTML table and returns it as a string."""
@@ -356,6 +375,7 @@ def _extract_test_data(response_data:dict,
     tracepoints = {}
     rows = []
     excluded =[]
+    unknown_count = 0
     mismatches= 0
     outliers_count= 0
     errors_count = 0
@@ -635,7 +655,7 @@ def _fetch_test_data(test_id=None,
             return (0,f"ERROR: {str(e)}\n\n {response.text}" )
 
 
-    test_data = _extract_test_data(response_data, )
+    test_data = _extract_test_data(response_data)
     test_data['test_ids'] = test_ids_to_fetch
     test_data['start_time'] = start_time
     test_data['end_time'] = end_time
@@ -643,6 +663,7 @@ def _fetch_test_data(test_id=None,
     test_data['metric_ids'] = metric_ids
     test_data['dimension_ids'] = dimension_ids
     test_data['sub_source_ids'] = sub_source_ids
+    test_data['tracepoints_ids'] = tracepoints_ids
     test_data['response_data'] = response_data
    
     return (response.status_code, TestData(test_data))
@@ -872,7 +893,6 @@ def parse_info_hdrs(dbg_header, conversion_dict=None):
   
     import re
     if "unknown" in dbg_header.lower():
-        logger.debug(f"unknown value: {dbg_header}")
         return None
     if pd.isnull(dbg_header) or dbg_header is None:
         return None
@@ -913,7 +933,7 @@ def extract_and_combine(df: pd.DataFrame) -> pd.DataFrame:
     new_df_count = 0
     for col in columns_to_check.keys():
         if col in df.columns:
-            logger.debug(f"found {col}")
+            #logger.debug(f"found {col}")
             #logger.debug(f"{columns_to_check[col]}")
           
             key_value_lists = df[col].dropna().apply(lambda item: parse_info_hdrs(item, conversion_dict=columns_to_check[col])) 
